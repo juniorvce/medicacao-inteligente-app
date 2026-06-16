@@ -27,7 +27,23 @@ export default function DiagnosticoPage() {
     // 1. Internet
     update(0, navigator.onLine ? 'ok' : 'erro', navigator.onLine ? 'Online' : 'Offline')
 
-    // 2. Supabase
+        // 2. Supabase
+    const supabase = createClient()
+    
+    async function checkSupabase() {
+      try {
+        const { error } = await supabase.from('_dummy_').select('*').limit(1)
+        if (error?.message?.includes('relation') || !error) {
+          update(1, 'ok', 'Conexao OK')
+        } else {
+          update(1, 'erro', error.message)
+        }
+      } catch {
+        update(1, 'erro', 'Nao foi possivel conectar')
+      }
+    }
+    checkSupabase()
+
     const supabase = createClient()
     supabase.from('_dummy_').select('*').limit(1)
       .then(({ error }) => {
