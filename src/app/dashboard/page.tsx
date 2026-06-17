@@ -15,6 +15,25 @@ interface Dose {
   hora_tomado?: string
 }
 
+type StatusEventoDose = 'pendente' | 'tomado' | 'pulado' | 'atrasado'
+
+interface SupaPlannedRow {
+  id: string
+  horario: string
+  dias_semana: (number | string)[] | null
+  medicamentos: {
+    nome: string | null
+    criancas: { nome: string | null } | null
+  } | null
+}
+
+interface SupaEventRow {
+  id: string
+  dose_planejada_id: string | null
+  status: StatusEventoDose
+  hora_administrada: string | null
+}
+
 export default function DashboardPage() {
   const [doses, setDoses] = useState<Dose[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,27 +52,85 @@ export default function DashboardPage() {
       }
       setUserEmail(session.user.email ?? '')
 
-      // TODO: buscar doses reais do Supabase + IndexedDB offline
-      // Por ora usa dados mockados para validar UI
-      setDoses([
-        {
-          id: '1',
-          nome: 'Remedio Exemplo A',
-          horario: '08:00',
-          tomado: false,
-        },
-        {
-          id: '2',
-          nome: 'Remedio Exemplo B',
-          horario: '12:00',
-          tomado: true,
-          quem: 'Mae',
-          hora_tomado: '12:03',
-        },
-        { id: '3', nome: 'Remedio Exemplo C', horario: '20:00', tomado: false },
-      ])
+      const hoje = new Date()
+      const weekday = hoje.getDay() // 0=dom ... 6=sab
+      const hojeISO = hoje.toISOString().slice(0, 10)
 
-      // Tenta sincronizar eventos locais assim que abrir
+      try {
+        const [plannedRes, eventsRes] = await Promise.all([
+          supabase
+            .from('doses_planejadas')
+            .select(
+              `id, horario, dias_semana, ativo, medicamentos:medicamento_id ( nome, criancas:crianca_id ( nome ) )`,
+            )
+            .eq('ativo', true),
+          supabase
+            .from('eventos_dose')
+            .select('id, dose_planejada_id, status, hora_administrada')
+            .eq('data_prevista', hojeISO),
+        ])
+
+        if (plannedRes.error) throw plannedRes.error
+        if (eventsRes.error) throw eventsRes.error
+
+        const planned = (plannedRes.data ?? []) as SupaPlannedRow[]
+        const events = (eventsRes.data ?? []) as SupaEventRow[]
+
+        const eventsByDose = new Map<string, SupaEventRow>()
+        events.forEach((ev) => {
+          if (ev.dose_planejada_id) {
+            eventsByDose.set(ev.dose_planejada_id, ev)
+          }
+        })
+
+        const todaysPlanned = planned.filter((row) => {
+          const dias = Array.isArray(row.dias_semana)
+            ? row.dias_semana.map((n) => Number(n))
+            : []
+          return dias.includes(weekday)
+        })
+
+        const mapped: Dose[] = todaysPlanned.map((row) => {
+          const ev = eventsByDose.get(row.id)
+          const tomado = ev?.status === 'tomado'
+
+          let horaTomado: string | undefined
+          if (tomado && ev?.hora_administrada) {
+            const d = new Date(ev.hora_administrada)
+            if (!Number.isNaN(d.getTime())) {
+              horaTomado = d.toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            }
+          }
+
+          const medNome = row.medicamentos?.nome ?? 'Medicacao'
+          const criancaNome = row.medicamentos?.criancas?.nome ?? null
+          const nome = criancaNome ? `${medNome} · ${criancaNome}` : medNome
+
+          const horarioRaw = row.horario
+          const horario =
+            typeof horarioRaw === 'string' && horarioRaw.length >= 5
+              ? horarioRaw.slice(0, 5)
+              : horarioRaw
+
+          return {
+            id: row.id,
+            nome,
+            horario,
+            tomado,
+            quem: tomado ? 'Responsavel' : undefined,
+            hora_tomado: tomado ? horaTomado : undefined,
+          }
+        })
+
+        setDoses(mapped)
+      } catch (error) {
+        console.warn('Erro ao carregar doses do dia, exibindo lista vazia', error)
+        setDoses([])
+      }
+
       try {
         await syncDoseEvents(supabase)
       } catch (e) {
@@ -62,6 +139,7 @@ export default function DashboardPage() {
 
       setLoading(false)
     }
+
     void init()
   }, [supabase, router])
 
@@ -88,7 +166,7 @@ export default function DashboardPage() {
     try {
       await queueDoseEvent({
         offlineId: crypto.randomUUID(),
-        dose_planejada_id: null,
+        dose_planejada_id: id,
         medicamento_id: null,
         crianca_id: null,
         data_prevista: agora.toISOString().slice(0, 10),
@@ -104,7 +182,7 @@ export default function DashboardPage() {
     }
   }
 
-  const hoje = new Date().toLocaleDateString('pt-BR', {
+  const hojeLabel = new Date().toLocaleDateString('pt-BR', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -128,7 +206,7 @@ export default function DashboardPage() {
           <h1 className="text-lg font-bold text-brand-700">
             💊 Medicacao Inteligente
           </h1>
-          <p className="text-xs text-gray-400 capitalize">{hoje}</p>
+          <p className="text-xs text-gray-400 capitalize">{hojeLabel}</p>
         </div>
         <div className="text-right">
           <span className="text-xs text-gray-500">{userEmail}</span>
@@ -190,6 +268,12 @@ export default function DashboardPage() {
             </div>
           </div>
         ))}
+
+        {doses.length === 0 && (
+          <div className="bg-white rounded-xl p-4 shadow-sm text-center text-sm text-gray-500">
+            Nenhuma dose planejada para hoje.
+          </div>
+        )}
       </div>
 
       {/* Navegacao */}
