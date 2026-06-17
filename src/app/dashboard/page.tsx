@@ -1,8 +1,10 @@
 'use client'
+
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { queueDoseEvent, syncDoseEvents } from '@/lib/doses-sync'
 
 interface Dose {
   id: string
@@ -22,33 +24,93 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function init() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { router.push('/login'); return }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session) {
+        router.push('/login')
+        return
+      }
       setUserEmail(session.user.email ?? '')
-      // TODO: buscar doses do Supabase + IndexedDB offline
+
+      // TODO: buscar doses reais do Supabase + IndexedDB offline
       // Por ora usa dados mockados para validar UI
       setDoses([
-        { id: '1', nome: 'Remedio Exemplo A', horario: '08:00', tomado: false },
-        { id: '2', nome: 'Remedio Exemplo B', horario: '12:00', tomado: true, quem: 'Mae', hora_tomado: '12:03' },
+        {
+          id: '1',
+          nome: 'Remedio Exemplo A',
+          horario: '08:00',
+          tomado: false,
+        },
+        {
+          id: '2',
+          nome: 'Remedio Exemplo B',
+          horario: '12:00',
+          tomado: true,
+          quem: 'Mae',
+          hora_tomado: '12:03',
+        },
         { id: '3', nome: 'Remedio Exemplo C', horario: '20:00', tomado: false },
       ])
+
+      // Tenta sincronizar eventos locais assim que abrir
+      try {
+        await syncDoseEvents(supabase)
+      } catch (e) {
+        console.warn('Falha ao sincronizar eventos locais', e)
+      }
+
       setLoading(false)
     }
-    init()
-  }, [])
+    void init()
+  }, [supabase, router])
 
-  function marcarTomado(id: string) {
-    setDoses(prev => prev.map(d =>
-      d.id === id
-        ? { ...d, tomado: true, quem: 'Responsavel', hora_tomado: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) }
-        : d
-    ))
-    // TODO: salvar no IndexedDB + sincronizar Supabase
+  async function marcarTomado(id: string) {
+    const agora = new Date()
+    const horaLabel = agora.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+
+    setDoses((prev) =>
+      prev.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              tomado: true,
+              quem: 'Responsavel',
+              hora_tomado: horaLabel,
+            }
+          : d,
+      ),
+    )
+
+    try {
+      await queueDoseEvent({
+        offlineId: crypto.randomUUID(),
+        dose_planejada_id: null,
+        medicamento_id: null,
+        crianca_id: null,
+        data_prevista: agora.toISOString().slice(0, 10),
+        hora_prevista: `${String(agora.getHours()).padStart(2, '0')}:${String(
+          agora.getMinutes(),
+        ).padStart(2, '0')}:00`,
+        status: 'tomado',
+        hora_administrada: agora.toISOString(),
+        observacao: null,
+      })
+    } catch (e) {
+      console.warn('Falha ao enfileirar evento local', e)
+    }
   }
 
-  const hoje = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
+  const hoje = new Date().toLocaleDateString('pt-BR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  })
   const total = doses.length
-  const feitos = doses.filter(d => d.tomado).length
+  const feitos = doses.filter((d) => d.tomado).length
 
   if (loading) {
     return (
@@ -63,12 +125,16 @@ export default function DashboardPage() {
       {/* Header */}
       <header className="bg-white shadow-sm px-4 py-4 flex items-center justify-between safe-top">
         <div>
-          <h1 className="text-lg font-bold text-brand-700">💊 Medicacao Inteligente</h1>
+          <h1 className="text-lg font-bold text-brand-700">
+            💊 Medicacao Inteligente
+          </h1>
           <p className="text-xs text-gray-400 capitalize">{hoje}</p>
         </div>
         <div className="text-right">
           <span className="text-xs text-gray-500">{userEmail}</span>
-          <div className="text-xs font-medium text-brand-600 mt-0.5">{feitos}/{total} concluidos</div>
+          <div className="text-xs font-medium text-brand-600 mt-0.5">
+            {feitos}/{total} concluidos
+          </div>
         </div>
       </header>
 
@@ -77,12 +143,16 @@ export default function DashboardPage() {
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <div className="flex justify-between text-sm mb-2">
             <span className="font-medium text-gray-700">Agenda de hoje</span>
-            <span className="text-brand-600 font-semibold">{feitos}/{total}</span>
+            <span className="text-brand-600 font-semibold">
+              {feitos}/{total}
+            </span>
           </div>
           <div className="w-full bg-gray-100 rounded-full h-2">
             <div
               className="bg-brand-500 h-2 rounded-full transition-all"
-              style={{ width: total > 0 ? `${(feitos / total) * 100}%` : '0%' }}
+              style={{
+                width: total > 0 ? `${(feitos / total) * 100}%` : '0%',
+              }}
             />
           </div>
         </div>
@@ -90,7 +160,7 @@ export default function DashboardPage() {
 
       {/* Lista de doses */}
       <div className="mx-4 mt-4 space-y-3">
-        {doses.map(dose => (
+        {doses.map((dose) => (
           <div
             key={dose.id}
             className={`bg-white rounded-xl p-4 shadow-sm border-l-4 ${
@@ -100,9 +170,13 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div className="flex-1">
                 <p className="font-semibold text-gray-800">{dose.nome}</p>
-                <p className="text-xs text-gray-400 mt-0.5">⏰ {dose.horario}</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  ⏰ {dose.horario}
+                </p>
                 {dose.tomado && dose.quem && (
-                  <p className="text-xs text-brand-600 mt-1">✅ {dose.quem} · {dose.hora_tomado}</p>
+                  <p className="text-xs text-brand-600 mt-1">
+                    ✅ {dose.quem} · {dose.hora_tomado}
+                  </p>
                 )}
               </div>
               {!dose.tomado && (
@@ -120,10 +194,30 @@ export default function DashboardPage() {
 
       {/* Navegacao */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex safe-bottom">
-        <Link href="/dashboard" className="flex-1 py-3 text-center text-xs text-brand-600 font-medium">🏠 Hoje</Link>
-        <Link href="/criancas" className="flex-1 py-3 text-center text-xs text-gray-400">👶 Criancas</Link>
-        <Link href="/historico" className="flex-1 py-3 text-center text-xs text-gray-400">📋 Historico</Link>
-        <Link href="/diagnostico" className="flex-1 py-3 text-center text-xs text-gray-400">🔍 Status</Link>
+        <Link
+          href="/dashboard"
+          className="flex-1 py-3 text-center text-xs text-brand-600 font-medium"
+        >
+          🏠 Hoje
+        </Link>
+        <Link
+          href="/criancas"
+          className="flex-1 py-3 text-center text-xs text-gray-400"
+        >
+          👶 Criancas
+        </Link>
+        <Link
+          href="/historico"
+          className="flex-1 py-3 text-center text-xs text-gray-400"
+        >
+          📋 Historico
+        </Link>
+        <Link
+          href="/diagnostico"
+          className="flex-1 py-3 text-center text-xs text-gray-400"
+        >
+          🔍 Status
+        </Link>
       </div>
     </main>
   )
