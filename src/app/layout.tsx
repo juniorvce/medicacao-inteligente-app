@@ -6,15 +6,9 @@ const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'Medicacao Inteligente',
-  description: 'Controle de medicacao infantil com suporte offline e familia',
+  description: 'Controle de medicacao para criancas e familias',
   manifest: '/manifest.json',
   themeColor: '#16a34a',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'default',
-    title: 'MedApp'
-  }
 }
 
 export default function RootLayout({
@@ -24,8 +18,27 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
+      <head>
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="MedApp" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+      </head>
       <body className={inter.className}>
         {children}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js')
+                    .then(function(reg) { console.log('SW registrado:', reg.scope); })
+                    .catch(function(err) { console.log('SW erro:', err); });
+                });
+              }
+            `,
+          }}
+        />
       </body>
     </html>
   )
