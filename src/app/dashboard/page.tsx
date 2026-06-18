@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { queueDoseEvent, syncDoseEvents } from '@/lib/doses-sync'
+import { ensureFamiliaAndPerfil } from '@/lib/onboarding'
 
 interface Dose {
   id: string
@@ -13,6 +14,8 @@ interface Dose {
   tomado: boolean
   quem?: string
   hora_tomado?: string
+  medicamentoId: string | null
+  criancaId: string | null
 }
 
 type StatusEventoDose = 'pendente' | 'tomado' | 'pulado' | 'atrasado'
@@ -22,8 +25,9 @@ interface SupaPlannedRow {
   horario: string
   dias_semana: (number | string)[] | null
   medicamentos: {
+    id: string
     nome: string | null
-    criancas: { nome: string | null } | null
+    criancas: { id: string; nome: string | null } | null
   } | null
 }
 
@@ -50,10 +54,14 @@ export default function DashboardPage() {
         router.push('/login')
         return
       }
-      setUserEmail(session.user.email ?? '')
+
+      const user = session.user
+      setUserEmail(user.email ?? '')
+
+      await ensureFamiliaAndPerfil(supabase, user.id, user.email)
 
       const hoje = new Date()
-      const weekday = hoje.getDay() // 0=dom ... 6=sab
+      const weekday = hoje.getDay()
       const hojeISO = hoje.toISOString().slice(0, 10)
 
       try {
@@ -61,7 +69,12 @@ export default function DashboardPage() {
           supabase
             .from('doses_planejadas')
             .select(
-              `id, horario, dias_semana, ativo, medicamentos:medicamento_id ( nome, criancas:crianca_id ( nome ) )`,
+              `id, horario, dias_semana, ativo,
+               medicamentos:medicamento_id (
+                 id,
+                 nome,
+                 criancas:crianca_id ( id, nome )
+               )`,
             )
             .eq('ativo', true),
           supabase
@@ -122,12 +135,14 @@ export default function DashboardPage() {
             tomado,
             quem: tomado ? 'Responsavel' : undefined,
             hora_tomado: tomado ? horaTomado : undefined,
+            medicamentoId: row.medicamentos?.id ?? null,
+            criancaId: row.medicamentos?.criancas?.id ?? null,
           }
         })
 
         setDoses(mapped)
       } catch (error) {
-        console.warn('Erro ao carregar doses do dia, exibindo lista vazia', error)
+        console.warn('Erro ao carregar doses do dia', error)
         setDoses([])
       }
 
@@ -150,35 +165,54 @@ export default function DashboardPage() {
       minute: '2-digit',
     })
 
+    const alvo = doses.find((d) => d.id === id) ?? null
+
     setDoses((prev) =>
       prev.map((d) =>
         d.id === id
-          ? {
-              ...d,
-              tomado: true,
-              quem: 'Responsavel',
-              hora_tomado: horaLabel,
-            }
+          ? { ...d, tomado: true, quem: 'Responsavel', hora_tomado: horaLabel }
           : d,
       ),
     )
 
+    const dataPrevista = agora.toISOString().slice(0, 10)
+    const horaPrevista = `${String(agora.getHours()).padStart(
+      2,
+      '0',
+    )}:${String(agora.getMinutes()).padStart(2, '0')}:00`
+
     try {
-      await queueDoseEvent({
-        offlineId: crypto.randomUUID(),
+      const { error } = await supabase.from('eventos_dose').insert({
         dose_planejada_id: id,
-        medicamento_id: null,
-        crianca_id: null,
-        data_prevista: agora.toISOString().slice(0, 10),
-        hora_prevista: `${String(agora.getHours()).padStart(2, '0')}:${String(
-          agora.getMinutes(),
-        ).padStart(2, '0')}:00`,
+        medicamento_id: alvo?.medicamentoId ?? null,
+        crianca_id: alvo?.criancaId ?? null,
+        data_prevista: dataPrevista,
+        hora_prevista: horaPrevista,
         status: 'tomado',
         hora_administrada: agora.toISOString(),
         observacao: null,
       })
+
+      if (error) {
+        throw error
+      }
     } catch (e) {
-      console.warn('Falha ao enfileirar evento local', e)
+      console.warn('Falha ao gravar evento online, enfileirando offline', e)
+      try {
+        await queueDoseEvent({
+          offlineId: crypto.randomUUID(),
+          dose_planejada_id: id,
+          medicamento_id: alvo?.medicamentoId ?? null,
+          crianca_id: alvo?.criancaId ?? null,
+          data_prevista: dataPrevista,
+          hora_prevista: horaPrevista,
+          status: 'tomado',
+          hora_administrada: agora.toISOString(),
+          observacao: null,
+        })
+      } catch (e2) {
+        console.warn('Falha ao enfileirar evento local', e2)
+      }
     }
   }
 
@@ -200,7 +234,6 @@ export default function DashboardPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 pb-8">
-      {/* Header */}
       <header className="bg-white shadow-sm px-4 py-4 flex items-center justify-between safe-top">
         <div>
           <h1 className="text-lg font-bold text-brand-700">
@@ -216,7 +249,6 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* Progress */}
       <div className="mx-4 mt-4">
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <div className="flex justify-between text-sm mb-2">
@@ -236,7 +268,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Lista de doses */}
       <div className="mx-4 mt-4 space-y-3">
         {doses.map((dose) => (
           <div
@@ -276,7 +307,6 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Navegacao */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex safe-bottom">
         <Link
           href="/dashboard"
