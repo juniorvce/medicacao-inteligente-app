@@ -20,15 +20,25 @@ interface Dose {
 
 type StatusEventoDose = 'pendente' | 'tomado' | 'pulado' | 'atrasado'
 
+// --- Supabase helper types to handle nested select that may return object, array or null ---
+type MaybeArray<T> = T | T[] | null
+
+interface SupaCrianca {
+  id: string
+  nome: string | null
+}
+
+interface SupaMedicamento {
+  id: string
+  nome: string | null
+  criancas: MaybeArray<SupaCrianca>
+}
+
 interface SupaPlannedRow {
   id: string
   horario: string
   dias_semana: (number | string)[] | null
-  medicamentos: {
-    id: string
-    nome: string | null
-    criancas: { id: string; nome: string | null } | null
-  } | null
+  medicamentos: MaybeArray<SupaMedicamento>
 }
 
 interface SupaEventRow {
@@ -36,6 +46,11 @@ interface SupaEventRow {
   dose_planejada_id: string | null
   status: StatusEventoDose
   hora_administrada: string | null
+}
+
+function firstOrNull<T>(value: MaybeArray<T>): T | null {
+  if (Array.isArray(value)) return value.length > 0 ? value[0] : null
+  return value ?? null
 }
 
 export default function DashboardPage() {
@@ -118,8 +133,12 @@ export default function DashboardPage() {
             }
           }
 
-          const medNome = row.medicamentos?.nome ?? 'Medicacao'
-          const criancaNome = row.medicamentos?.criancas?.nome ?? null
+          // normalize medicamento / crianca that can come as object, array or null
+          const med = firstOrNull(row.medicamentos)
+          const crianca = firstOrNull(med?.criancas ?? null)
+
+          const medNome = med?.nome ?? 'Medicacao'
+          const criancaNome = crianca?.nome ?? null
           const nome = criancaNome ? `${medNome} · ${criancaNome}` : medNome
 
           const horarioRaw = row.horario
@@ -135,8 +154,8 @@ export default function DashboardPage() {
             tomado,
             quem: tomado ? 'Responsavel' : undefined,
             hora_tomado: tomado ? horaTomado : undefined,
-            medicamentoId: row.medicamentos?.id ?? null,
-            criancaId: row.medicamentos?.criancas?.id ?? null,
+            medicamentoId: med?.id ?? null,
+            criancaId: crianca?.id ?? null,
           }
         })
 
