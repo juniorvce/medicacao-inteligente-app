@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { ensureFamiliaAndPerfil } from '@/lib/onboarding'
 
 interface Crianca {
   id: string
@@ -18,6 +19,12 @@ export default function CriancasPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [familiaId, setFamiliaId] = useState<string | null>(null)
+  const [novoNome, setNovoNome] = useState('')
+  const [novaData, setNovaData] = useState('')
+  const [novoMedico, setNovoMedico] = useState('')
+  const [saving, setSaving] = useState(false)
+
   const supabase = createClient()
   const router = useRouter()
 
@@ -30,6 +37,13 @@ export default function CriancasPage() {
         router.push('/login')
         return
       }
+
+      const famId = await ensureFamiliaAndPerfil(
+        supabase,
+        session.user.id,
+        session.user.email,
+      )
+      setFamiliaId(famId)
 
       try {
         const { data, error } = await supabase
@@ -51,7 +65,7 @@ export default function CriancasPage() {
       }
     }
 
-    load()
+    void load()
   }, [supabase, router])
 
   function formatIdade(dataNasc: string | null) {
@@ -64,6 +78,48 @@ export default function CriancasPage() {
       anos -= 1
     }
     return `${anos} ano${anos !== 1 ? 's' : ''}`
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!familiaId) {
+      setError('Nao foi possivel identificar a familia do usuario.')
+      return
+    }
+    if (!novoNome.trim()) {
+      setError('Informe o nome da crianca.')
+      return
+    }
+    setError(null)
+    setSaving(true)
+
+    try {
+      const { data, error } = await supabase
+        .from('criancas')
+        .insert({
+          familia_id: familiaId,
+          nome: novoNome.trim(),
+          data_nasc: novaData || null,
+          medico: novoMedico || null,
+        })
+        .select('id, nome, data_nasc, foto_url, medico')
+        .single<Crianca>()
+
+      if (error) {
+        setError(error.message)
+      } else if (data) {
+        setCriancas((prev) => [...prev, data])
+        setNovoNome('')
+        setNovaData('')
+        setNovoMedico('')
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Erro ao criar crianca'
+      setError(msg)
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (loading) {
@@ -97,6 +153,42 @@ export default function CriancasPage() {
             {error}
           </div>
         )}
+
+        <form
+          onSubmit={handleCreate}
+          className="bg-white rounded-2xl p-4 shadow-sm space-y-3"
+        >
+          <p className="text-sm font-semibold text-gray-700">
+            Nova crianca
+          </p>
+          <input
+            type="text"
+            value={novoNome}
+            onChange={(e) => setNovoNome(e.target.value)}
+            placeholder="Nome"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm"
+          />
+          <input
+            type="date"
+            value={novaData}
+            onChange={(e) => setNovaData(e.target.value)}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm"
+          />
+          <input
+            type="text"
+            value={novoMedico}
+            onChange={(e) => setNovoMedico(e.target.value)}
+            placeholder="Medico (opcional)"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={saving}
+            className="w-full bg-green-600 text-white text-sm font-semibold py-2.5 rounded-xl hover:bg-green-700 disabled:opacity-50 active:scale-95 transition-all"
+          >
+            {saving ? 'Salvando...' : 'Adicionar crianca'}
+          </button>
+        </form>
 
         {criancas.length === 0 && !error && (
           <div className="bg-white rounded-2xl p-4 shadow-sm text-center text-sm text-gray-500">
