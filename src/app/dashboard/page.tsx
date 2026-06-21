@@ -340,6 +340,12 @@ export default function DashboardPage() {
           👶 Criancas
         </Link>
         <Link
+          href="/medicamentos"
+          className="flex-1 py-3 text-center text-xs text-gray-400"
+        >
+          💊 Remedios
+        </Link>
+        <Link
           href="/historico"
           className="flex-1 py-3 text-center text-xs text-gray-400"
         >
