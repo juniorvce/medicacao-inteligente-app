@@ -45,41 +45,34 @@ export default function ReceitaPage() {
   async function handleAnalyze() {
     setError(null)
     setMedicamentos(null)
+
+    const trimmed = text.trim()
+    if (!trimmed) {
+      setError('Cole o texto da receita primeiro.')
+      return
+    }
+
     setLoading(true)
     try {
-      const res = await supabase.functions.invoke('parse-prescription', {
-        body: { text },
+      const { data, error } = await supabase.functions.invoke<{
+        medicamentos: Medicamento[]
+      }>('parse-prescription', {
+        body: { text: trimmed },
       })
 
-      if (!res || 'status' in res === false) {
-        setError('Falha na invocação da função')
-        setLoading(false)
+      if (error) {
+        setError(error.message ?? 'Erro ao chamar a funcao')
         return
       }
 
-      if (res.status === 500) {
-        setError('Serviço de IA não configurado (OPENAI_API_KEY ausente)')
-        setLoading(false)
-        return
-      }
-
-      if (res.status >= 400) {
-        const data = await res.json().catch(() => null)
-        setError((data && (data.error || JSON.stringify(data))) || 'Erro desconhecido')
-        setLoading(false)
-        return
-      }
-
-      const data = await res.json()
       if (!data || !Array.isArray(data.medicamentos)) {
-        setError('Resposta inválida da função')
-        setLoading(false)
+        setError('Resposta invalida da funcao')
         return
       }
 
-      setMedicamentos(data.medicamentos as Medicamento[])
+      setMedicamentos(data.medicamentos)
     } catch (e) {
-      setError(String(e))
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -93,7 +86,9 @@ export default function ReceitaPage() {
     <main className="min-h-screen bg-gray-50 pb-16">
       <header className="bg-white shadow-sm px-4 py-4 safe-top">
         <h1 className="text-lg font-bold text-brand-700">🧾 Ler receita com IA</h1>
-        <p className="text-xs text-gray-400 mt-1">Cole o texto livre da receita e clique em analisar.</p>
+        <p className="text-xs text-gray-400 mt-1">
+          Cole o texto livre da receita e clique em analisar.
+        </p>
       </header>
 
       <div className="mx-4 mt-4">
@@ -138,9 +133,17 @@ export default function ReceitaPage() {
                     <div className="text-xs text-gray-500 mt-1">
                       Dose: {String(m.dose ?? '—')} {m.unidade ?? ''}
                     </div>
-                    <div className="text-xs text-gray-500">Frequência: {m.frequencia ?? '—'}</div>
-                    <div className="text-xs text-gray-500">Duração: {m.duracao ?? '—'}</div>
-                    {m.observacao && <div className="text-xs text-gray-500 mt-1">Obs: {m.observacao}</div>}
+                    <div className="text-xs text-gray-500">
+                      Frequência: {m.frequencia ?? '—'}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Duração: {m.duracao ?? '—'}
+                    </div>
+                    {m.observacao && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Obs: {m.observacao}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -150,10 +153,18 @@ export default function ReceitaPage() {
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex safe-bottom">
-        <a href="/dashboard" className="flex-1 py-3 text-center text-xs text-gray-400">🏠 Voltar</a>
-        <a href="/criancas" className="flex-1 py-3 text-center text-xs text-gray-400">👶 Criancas</a>
-        <a href="/historico" className="flex-1 py-3 text-center text-xs text-gray-400">📋 Historico</a>
-        <a href="/diagnostico" className="flex-1 py-3 text-center text-xs text-gray-400">🔍 Status</a>
+        <a href="/dashboard" className="flex-1 py-3 text-center text-xs text-gray-400">
+          🏠 Voltar
+        </a>
+        <a href="/criancas" className="flex-1 py-3 text-center text-xs text-gray-400">
+          👶 Criancas
+        </a>
+        <a href="/historico" className="flex-1 py-3 text-center text-xs text-gray-400">
+          📋 Historico
+        </a>
+        <a href="/diagnostico" className="flex-1 py-3 text-center text-xs text-gray-400">
+          🔍 Status
+        </a>
       </div>
     </main>
   )
