@@ -6,7 +6,8 @@
  * 2. Browser Notifications (requer permissão do usuário)
  * 3. Overlay visual (gerenciado pelo dashboard — não depende daqui)
  *
- * Nota sobre iOS Safari: o AudioContext só é desbloqueado após gesto do usuário. Chamamos unlockAudio() no primeiro toque/clique da página para
+ * Nota sobre iOS Safari: o AudioContext só é desbloqueado após gesto do
+ * usuário. Chamamos unlockAudio() no primeiro toque/clique da página para
  * garantir que o som funcione quando o alerta disparar.
  */
 
