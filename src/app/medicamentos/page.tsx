@@ -93,7 +93,7 @@ export default function MedicamentosPage() {
         if (error) {
           setError(error.message)
         } else {
-          const rows = (data ?? []) as unknown as SupaMedicamentoRow[]
+          const rows = (data ?? []) as SupaMedicamentoRow[]
           const mapped: Medicamento[] = rows.map((row) => {
             const crianca = firstOrNull(row.criancas)
             const horarios = (row.doses_planejadas ?? [])
