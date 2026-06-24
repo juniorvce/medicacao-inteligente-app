@@ -38,6 +38,8 @@ interface SupaPlannedRow {
   id: string
   horario: string
   dias_semana: (number | string)[] | null
+  data_inicio: string | null
+  data_fim: string | null
   medicamentos: MaybeArray<SupaMedicamento>
 }
 
@@ -84,7 +86,7 @@ export default function DashboardPage() {
           supabase
             .from('doses_planejadas')
             .select(
-              `id, horario, dias_semana, ativo,
+              `id, horario, dias_semana, ativo, data_inicio, data_fim,
                medicamentos:medicamento_id (
                  id,
                  nome,
@@ -115,7 +117,11 @@ export default function DashboardPage() {
           const dias = Array.isArray(row.dias_semana)
             ? row.dias_semana.map((n) => Number(n))
             : []
-          return dias.includes(weekday)
+          if (!dias.includes(weekday)) return false
+          // Filtro de data: respeita data_inicio e data_fim de receitas dinamicas
+          if (row.data_inicio && row.data_inicio > hojeISO) return false
+          if (row.data_fim && row.data_fim < hojeISO) return false
+          return true
         })
 
         const mapped: Dose[] = todaysPlanned.map((row) => {
