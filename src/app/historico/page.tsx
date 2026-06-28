@@ -7,6 +7,23 @@ import { createClient } from '@/lib/supabase/client'
 
 type StatusEventoDose = 'pendente' | 'tomado' | 'pulado' | 'atrasado'
 
+type MaybeArray<T> = T | T[] | null
+
+interface SupaNome {
+  nome: string | null
+}
+
+interface SupaHistoricoRow {
+  id: string
+  data_prevista: string
+  hora_prevista: string
+  status: StatusEventoDose
+  hora_administrada: string | null
+  observacao: string | null
+  criancas: MaybeArray<SupaNome>
+  medicamentos: MaybeArray<SupaNome>
+}
+
 interface HistoricoDoseItem {
   id: string
   data_prevista: string
@@ -18,10 +35,18 @@ interface HistoricoDoseItem {
   medicamento_nome: string | null
 }
 
+function firstOrNull<T>(value: MaybeArray<T>): T | null {
+  if (Array.isArray(value)) return value.length > 0 ? value[0] : null
+  return value ?? null
+}
+
+type FiltroStatus = 'todos' | StatusEventoDose
+
 export default function HistoricoPage() {
   const [items, setItems] = useState<HistoricoDoseItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('todos')
 
   const supabase = createClient()
   const router = useRouter()
@@ -51,21 +76,26 @@ export default function HistoricoPage() {
           `)
           .order('data_prevista', { ascending: false })
           .order('hora_prevista', { ascending: false })
-          .limit(50)
+          .limit(100)
 
         if (error) {
           setError(error.message)
         } else {
-          const mapped: HistoricoDoseItem[] = (data ?? []).map((row: any) => ({
-            id: row.id,
-            data_prevista: row.data_prevista,
-            hora_prevista: row.hora_prevista,
-            status: row.status,
-            hora_administrada: row.hora_administrada,
-            observacao: row.observacao,
-            crianca_nome: row.criancas?.nome ?? null,
-            medicamento_nome: row.medicamentos?.nome ?? null,
-          }))
+          const rows = (data ?? []) as SupaHistoricoRow[]
+          const mapped: HistoricoDoseItem[] = rows.map((row) => {
+            const crianca = firstOrNull(row.criancas)
+            const medicamento = firstOrNull(row.medicamentos)
+            return {
+              id: row.id,
+              data_prevista: row.data_prevista,
+              hora_prevista: row.hora_prevista,
+              status: row.status,
+              hora_administrada: row.hora_administrada,
+              observacao: row.observacao,
+              crianca_nome: crianca?.nome ?? null,
+              medicamento_nome: medicamento?.nome ?? null,
+            }
+          })
           setItems(mapped)
         }
       } catch (err) {
@@ -78,10 +108,11 @@ export default function HistoricoPage() {
     }
 
     load()
-  }, [supabase, router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function formatData(data: string) {
-    const d = new Date(data)
+    const d = new Date(data + 'T12:00:00')
     if (Number.isNaN(d.getTime())) return data
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
@@ -91,6 +122,11 @@ export default function HistoricoPage() {
     return hora.slice(0, 5)
   }
 
+  const filteredItems =
+    filtroStatus === 'todos'
+      ? items
+      : items.filter((i) => i.status === filtroStatus)
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center">
@@ -98,6 +134,14 @@ export default function HistoricoPage() {
       </main>
     )
   }
+
+  const statusOptions: { value: FiltroStatus; label: string }[] = [
+    { value: 'todos', label: 'Todos' },
+    { value: 'tomado', label: 'Tomado' },
+    { value: 'pendente', label: 'Pendente' },
+    { value: 'pulado', label: 'Pulado' },
+    { value: 'atrasado', label: 'Atrasado' },
+  ]
 
   return (
     <main className="min-h-screen bg-gray-50 pb-10">
@@ -123,13 +167,32 @@ export default function HistoricoPage() {
           </div>
         )}
 
-        {items.length === 0 && !error && (
+        {/* Filtro por status */}
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {statusOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setFiltroStatus(opt.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all active:scale-95 ${
+                filtroStatus === opt.value
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-white text-gray-500 border border-gray-200'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {filteredItems.length === 0 && !error && (
           <div className="bg-white rounded-2xl p-4 shadow-sm text-center text-sm text-gray-500">
-            Nenhuma dose registrada ainda.
+            {filtroStatus === 'todos'
+              ? 'Nenhuma dose registrada ainda.'
+              : `Nenhuma dose com status "${filtroStatus}".`}
           </div>
         )}
 
-        {items.map((item) => (
+        {filteredItems.map((item) => (
           <div
             key={item.id}
             className="bg-white rounded-2xl p-4 shadow-sm flex items-start justify-between"
@@ -158,10 +221,12 @@ export default function HistoricoPage() {
             <span
               className={
                 item.status === 'tomado'
-                  ? 'text-green-600 text-sm font-semibold'
+                  ? 'text-green-600 text-xs font-semibold'
                   : item.status === 'pendente'
-                  ? 'text-orange-500 text-sm font-semibold'
-                  : 'text-gray-400 text-sm font-semibold'
+                  ? 'text-orange-500 text-xs font-semibold'
+                  : item.status === 'pulado'
+                  ? 'text-gray-400 text-xs font-semibold'
+                  : 'text-red-400 text-xs font-semibold'
               }
             >
               {item.status.toUpperCase()}

@@ -1,26 +1,33 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { queueDoseEvent, syncDoseEvents } from '@/lib/doses-sync'
 import { ensureFamiliaAndPerfil } from '@/lib/onboarding'
+import {
+  unlockAudio,
+  playAlertSound,
+  requestNotificationPermission,
+  showBrowserNotification,
+} from '@/lib/alertas'
 
 interface Dose {
   id: string
   nome: string
   horario: string
   tomado: boolean
+  pulado: boolean
   quem?: string
   hora_tomado?: string
   medicamentoId: string | null
   criancaId: string | null
+  criancaNome: string | null
 }
 
 type StatusEventoDose = 'pendente' | 'tomado' | 'pulado' | 'atrasado'
 
-// --- Supabase helper types to handle nested select that may return object, array or null ---
 type MaybeArray<T> = T | T[] | null
 
 interface SupaCrianca {
@@ -59,8 +66,30 @@ export default function DashboardPage() {
   const [doses, setDoses] = useState<Dose[]>([])
   const [loading, setLoading] = useState(true)
   const [userEmail, setUserEmail] = useState('')
-  const supabase = createClient()
+  const [notifGranted, setNotifGranted] = useState(false)
+  const supabaseRef = useRef(createClient())
   const router = useRouter()
+  const alertedRef = useRef<Set<string>>(new Set())
+  const audioUnlockedRef = useRef(false)
+
+  const supabase = supabaseRef.current
+
+  // Unlock audio on first user gesture
+  const handleFirstGesture = useCallback(() => {
+    if (!audioUnlockedRef.current) {
+      unlockAudio()
+      audioUnlockedRef.current = true
+    }
+  }, [])
+
+  useEffect(() => {
+    document.addEventListener('click', handleFirstGesture, { once: true })
+    document.addEventListener('touchend', handleFirstGesture, { once: true })
+    return () => {
+      document.removeEventListener('click', handleFirstGesture)
+      document.removeEventListener('touchend', handleFirstGesture)
+    }
+  }, [handleFirstGesture])
 
   useEffect(() => {
     async function init() {
@@ -76,6 +105,10 @@ export default function DashboardPage() {
       setUserEmail(user.email ?? '')
 
       await ensureFamiliaAndPerfil(supabase, user.id, user.email)
+
+      // Request notification permission
+      const granted = await requestNotificationPermission()
+      setNotifGranted(granted)
 
       const hoje = new Date()
       const weekday = hoje.getDay()
@@ -118,7 +151,6 @@ export default function DashboardPage() {
             ? row.dias_semana.map((n) => Number(n))
             : []
           if (!dias.includes(weekday)) return false
-          // Filtro de data: respeita data_inicio e data_fim de receitas dinamicas
           if (row.data_inicio && row.data_inicio > hojeISO) return false
           if (row.data_fim && row.data_fim < hojeISO) return false
           return true
@@ -127,6 +159,7 @@ export default function DashboardPage() {
         const mapped: Dose[] = todaysPlanned.map((row) => {
           const ev = eventsByDose.get(row.id)
           const tomado = ev?.status === 'tomado'
+          const pulado = ev?.status === 'pulado'
 
           let horaTomado: string | undefined
           if (tomado && ev?.hora_administrada) {
@@ -139,7 +172,6 @@ export default function DashboardPage() {
             }
           }
 
-          // normalize medicamento / crianca that can come as object, array or null
           const med = firstOrNull(row.medicamentos)
           const crianca = firstOrNull(med?.criancas ?? null)
 
@@ -158,10 +190,12 @@ export default function DashboardPage() {
             nome,
             horario,
             tomado,
+            pulado,
             quem: tomado ? 'Responsavel' : undefined,
             hora_tomado: tomado ? horaTomado : undefined,
             medicamentoId: med?.id ?? null,
             criancaId: crianca?.id ?? null,
+            criancaNome,
           }
         })
 
@@ -181,9 +215,36 @@ export default function DashboardPage() {
     }
 
     void init()
-  }, [supabase, router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  async function marcarTomado(id: string) {
+  // Alert timer: check every 30s if any dose matches the current time
+  useEffect(() => {
+    if (loading || doses.length === 0) return
+
+    function checkAlerts() {
+      const now = new Date()
+      const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+
+      doses.forEach((dose) => {
+        if (dose.tomado || dose.pulado) return
+        if (dose.horario !== nowHHMM) return
+        if (alertedRef.current.has(dose.id)) return
+
+        alertedRef.current.add(dose.id)
+        playAlertSound()
+
+        const medName = dose.nome.split(' · ')[0]
+        showBrowserNotification(medName, dose.criancaNome)
+      })
+    }
+
+    checkAlerts()
+    const interval = setInterval(checkAlerts, 30_000)
+    return () => clearInterval(interval)
+  }, [loading, doses])
+
+  async function registrarEvento(id: string, status: StatusEventoDose) {
     const agora = new Date()
     const horaLabel = agora.toLocaleTimeString('pt-BR', {
       hour: '2-digit',
@@ -195,16 +256,19 @@ export default function DashboardPage() {
     setDoses((prev) =>
       prev.map((d) =>
         d.id === id
-          ? { ...d, tomado: true, quem: 'Responsavel', hora_tomado: horaLabel }
+          ? {
+              ...d,
+              tomado: status === 'tomado',
+              pulado: status === 'pulado',
+              quem: status === 'tomado' ? 'Responsavel' : undefined,
+              hora_tomado: status === 'tomado' ? horaLabel : undefined,
+            }
           : d,
       ),
     )
 
     const dataPrevista = agora.toISOString().slice(0, 10)
-    const horaPrevista = `${String(agora.getHours()).padStart(
-      2,
-      '0',
-    )}:${String(agora.getMinutes()).padStart(2, '0')}:00`
+    const horaPrevista = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}:00`
 
     try {
       const { error } = await supabase.from('eventos_dose').insert({
@@ -213,14 +277,12 @@ export default function DashboardPage() {
         crianca_id: alvo?.criancaId ?? null,
         data_prevista: dataPrevista,
         hora_prevista: horaPrevista,
-        status: 'tomado',
-        hora_administrada: agora.toISOString(),
-        observacao: null,
+        status,
+        hora_administrada: status === 'tomado' ? agora.toISOString() : null,
+        observacao: status === 'pulado' ? 'Dose pulada pelo responsavel' : null,
       })
 
-      if (error) {
-        throw error
-      }
+      if (error) throw error
     } catch (e) {
       console.warn('Falha ao gravar evento online, enfileirando offline', e)
       try {
@@ -231,14 +293,20 @@ export default function DashboardPage() {
           crianca_id: alvo?.criancaId ?? null,
           data_prevista: dataPrevista,
           hora_prevista: horaPrevista,
-          status: 'tomado',
-          hora_administrada: agora.toISOString(),
-          observacao: null,
+          status,
+          hora_administrada: status === 'tomado' ? agora.toISOString() : null,
+          observacao: status === 'pulado' ? 'Dose pulada pelo responsavel' : null,
         })
       } catch (e2) {
         console.warn('Falha ao enfileirar evento local', e2)
       }
     }
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
   }
 
   const hojeLabel = new Date().toLocaleDateString('pt-BR', {
@@ -248,6 +316,7 @@ export default function DashboardPage() {
   })
   const total = doses.length
   const feitos = doses.filter((d) => d.tomado).length
+  const pulados = doses.filter((d) => d.pulado).length
 
   if (loading) {
     return (
@@ -258,7 +327,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 pb-8">
+    <main className="min-h-screen bg-gray-50 pb-24">
       <header className="bg-white shadow-sm px-4 py-4 flex items-center justify-between safe-top">
         <div>
           <h1 className="text-lg font-bold text-brand-700">
@@ -270,7 +339,16 @@ export default function DashboardPage() {
           <span className="text-xs text-gray-500">{userEmail}</span>
           <div className="text-xs font-medium text-brand-600 mt-0.5">
             {feitos}/{total} concluidos
+            {pulados > 0 && (
+              <span className="text-gray-400 ml-1">· {pulados} pulado{pulados !== 1 ? 's' : ''}</span>
+            )}
           </div>
+          <button
+            onClick={handleLogout}
+            className="text-xs text-red-400 hover:text-red-600 mt-1 font-medium"
+          >
+            Sair
+          </button>
         </div>
       </header>
 
@@ -298,7 +376,11 @@ export default function DashboardPage() {
           <div
             key={dose.id}
             className={`bg-white rounded-xl p-4 shadow-sm border-l-4 ${
-              dose.tomado ? 'border-brand-400 opacity-75' : 'border-orange-400'
+              dose.tomado
+                ? 'border-brand-400 opacity-75'
+                : dose.pulado
+                ? 'border-gray-300 opacity-60'
+                : 'border-orange-400'
             }`}
           >
             <div className="flex items-center justify-between">
@@ -312,14 +394,27 @@ export default function DashboardPage() {
                     ✅ {dose.quem} · {dose.hora_tomado}
                   </p>
                 )}
+                {dose.pulado && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    ⏭️ Dose pulada
+                  </p>
+                )}
               </div>
-              {!dose.tomado && (
-                <button
-                  onClick={() => marcarTomado(dose.id)}
-                  className="ml-3 bg-brand-600 text-white px-4 py-2 rounded-lg font-semibold text-sm hover:bg-brand-700 active:scale-95 transition-all"
-                >
-                  ✓ Tomado
-                </button>
+              {!dose.tomado && !dose.pulado && (
+                <div className="flex gap-2 ml-3">
+                  <button
+                    onClick={() => registrarEvento(dose.id, 'pulado')}
+                    className="bg-gray-100 text-gray-500 px-3 py-2 rounded-lg font-medium text-xs hover:bg-gray-200 active:scale-95 transition-all"
+                  >
+                    Pular
+                  </button>
+                  <button
+                    onClick={() => registrarEvento(dose.id, 'tomado')}
+                    className="bg-brand-600 text-white px-4 py-2 rounded-lg font-semibold text-sm hover:bg-brand-700 active:scale-95 transition-all"
+                  >
+                    ✓ Tomado
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -332,6 +427,7 @@ export default function DashboardPage() {
         )}
       </div>
 
+      {/* Bottom navigation */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex safe-bottom">
         <Link
           href="/dashboard"
@@ -352,16 +448,16 @@ export default function DashboardPage() {
           💊 Remedios
         </Link>
         <Link
+          href="/receita"
+          className="flex-1 py-3 text-center text-xs text-gray-400"
+        >
+          🧾 Receita
+        </Link>
+        <Link
           href="/historico"
           className="flex-1 py-3 text-center text-xs text-gray-400"
         >
           📋 Historico
-        </Link>
-        <Link
-          href="/diagnostico"
-          className="flex-1 py-3 text-center text-xs text-gray-400"
-        >
-          🔍 Status
         </Link>
       </div>
     </main>

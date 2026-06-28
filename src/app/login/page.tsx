@@ -4,11 +4,14 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
+type AuthMode = 'login' | 'signup'
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
+  const [mode, setMode] = useState<AuthMode>('login')
   const router = useRouter()
   const supabase = createClient()
 
@@ -60,6 +63,42 @@ export default function LoginPage() {
     }
   }
 
+  const handleSignUp = async () => {
+    if (!email) {
+      setMessage({ text: 'Informe seu email.', type: 'error' })
+      return
+    }
+    if (!password || password.length < 6) {
+      setMessage({ text: 'A senha deve ter pelo menos 6 caracteres.', type: 'error' })
+      return
+    }
+
+    setLoading(true)
+    setMessage({ text: '', type: '' })
+
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      })
+
+      if (error) throw error
+
+      setMessage({
+        text: 'Conta criada! Verifique seu email para confirmar.',
+        type: 'success',
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao criar conta'
+      setMessage({ text: msg, type: 'error' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-sm p-6 space-y-5">
@@ -69,7 +108,9 @@ export default function LoginPage() {
             Medicacao Inteligente
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Entre com senha ou receba um link magico
+            {mode === 'login'
+              ? 'Entre com senha ou receba um link magico'
+              : 'Crie sua conta para comecar'}
           </p>
         </div>
 
@@ -103,44 +144,78 @@ export default function LoginPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Senha
-              <span className="text-gray-400 font-normal ml-1">
-                (opcional para Magic Link)
-              </span>
+              {mode === 'login' && (
+                <span className="text-gray-400 font-normal ml-1">
+                  (opcional para Magic Link)
+                </span>
+              )}
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition"
-              placeholder="Sua senha"
-              autoComplete="current-password"
+              placeholder={mode === 'signup' ? 'Minimo 6 caracteres' : 'Sua senha'}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             />
           </div>
         </div>
 
-        <div className="space-y-3 pt-1">
-          <button
-            onClick={() => handleLogin('password')}
-            disabled={loading}
-            className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl hover:bg-green-700 disabled:opacity-50 active:scale-95 transition-all text-sm"
-          >
-            {loading ? 'Aguarde...' : 'Entrar com Senha'}
-          </button>
+        {mode === 'login' ? (
+          <div className="space-y-3 pt-1">
+            <button
+              onClick={() => handleLogin('password')}
+              disabled={loading}
+              className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl hover:bg-green-700 disabled:opacity-50 active:scale-95 transition-all text-sm"
+            >
+              {loading ? 'Aguarde...' : 'Entrar com Senha'}
+            </button>
 
-          <div className="flex items-center gap-3">
-            <div className="flex-1 border-t border-gray-200" />
-            <span className="text-gray-400 text-xs">OU</span>
-            <div className="flex-1 border-t border-gray-200" />
+            <div className="flex items-center gap-3">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-gray-400 text-xs">OU</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+
+            <button
+              onClick={() => handleLogin('magic_link')}
+              disabled={loading}
+              className="w-full bg-white border-2 border-gray-200 text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-50 disabled:opacity-50 active:scale-95 transition-all text-sm"
+            >
+              {loading ? 'Enviando...' : '🔗 Enviar Magic Link'}
+            </button>
+
+            <button
+              onClick={() => {
+                setMode('signup')
+                setMessage({ text: '', type: '' })
+              }}
+              className="w-full text-brand-600 text-sm font-medium py-2 hover:text-brand-700"
+            >
+              Nao tem conta? Criar agora
+            </button>
           </div>
+        ) : (
+          <div className="space-y-3 pt-1">
+            <button
+              onClick={handleSignUp}
+              disabled={loading}
+              className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl hover:bg-green-700 disabled:opacity-50 active:scale-95 transition-all text-sm"
+            >
+              {loading ? 'Criando conta...' : 'Criar conta'}
+            </button>
 
-          <button
-            onClick={() => handleLogin('magic_link')}
-            disabled={loading}
-            className="w-full bg-white border-2 border-gray-200 text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-50 disabled:opacity-50 active:scale-95 transition-all text-sm"
-          >
-            {loading ? 'Enviando...' : '🔗 Enviar Magic Link'}
-          </button>
-        </div>
+            <button
+              onClick={() => {
+                setMode('login')
+                setMessage({ text: '', type: '' })
+              }}
+              className="w-full text-brand-600 text-sm font-medium py-2 hover:text-brand-700"
+            >
+              Ja tem conta? Entrar
+            </button>
+          </div>
+        )}
 
         <p className="text-center text-xs text-gray-400">
           Ao entrar, voce concorda com o uso seguro dos dados de medicacao.

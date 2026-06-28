@@ -32,22 +32,41 @@ serve(async (req: Request) => {
   "medicamentos": [
     {
       "nome": "string",
-      "dose": "string or number",
-      "unidade": "string (e.g. mg, ml)",
-      "frequencia": "string (e.g. 8/8h, 12/12h or 'once a day')",
+      "dose": "string or number or null",
+      "unidade": "string (e.g. mg, ml) or null",
+      "frequencia": "string (e.g. 8/8h, 12/12h or 'once a day') or null",
       "duracao": "string (e.g. 7 dias, 5 dias, 1 semana) or null",
-      "observacao": "string or null"
+      "observacao": "string or null",
+      "requires_confirmation": false,
+      "esquema_variavel": false,
+      "fases": null
     }
   ]
 }
 
-Important constraints:
-- Output MUST be valid JSON, with a top-level key `medicamentos` which is an array (possibly empty).
+IMPORTANT RULES:
+- Output MUST be valid JSON, with a top-level key "medicamentos" which is an array (possibly empty).
 - Do not output any explanatory text, markdown, or extra fields.
 - Normalize numbers: doses should be numbers when possible (but can be string if ambiguous). Units should be short strings (mg, g, ml, gotas, comprimidos).
 - If a field is unknown, use null (not empty string).
 
-Parse examples of free-form prescription text like: 'Amoxicilina 250 mg 8/8h por 7 dias' or 'Paracetamol 500mg SOS até 5 dias'.
+VARIABLE SCHEME / PHASES:
+- If the prescription describes a tapering/progressive schedule (e.g. "days 1-2: 3x/day, days 3-5: 2x/day, day 6+: 1x/day"), set "esquema_variavel": true and populate "fases" as an array:
+  "fases": [
+    { "dias_duracao": 2, "vezes_por_dia": 3, "descricao": "Dias 1-2: 3x ao dia" },
+    { "dias_duracao": 3, "vezes_por_dia": 2, "descricao": "Dias 3-5: 2x ao dia" },
+    { "dias_duracao": null, "vezes_por_dia": 1, "descricao": "Dia 6 em diante: 1x ao dia e parar" }
+  ]
+- When "esquema_variavel" is true, "frequencia" and "duracao" can be null (the phases contain the detail).
+- If "esquema_variavel" is false, set "fases" to null.
+
+CONFIRMATION FLAG:
+- Set "requires_confirmation": true if any part of the prescription is ambiguous, unclear, or partially illegible. Otherwise set it to false.
+
+Parse examples of free-form prescription text like:
+- 'Amoxicilina 250 mg 8/8h por 7 dias'
+- 'Paracetamol 500mg SOS até 5 dias'
+- 'Koide D - Dias 1-2: 3x/dia, Dias 3-5: 2x/dia, Dia 6: 1x e parar'
 `;
 
     const userPrompt = `Parse the following prescription text and return the JSON described above. Text:\n\n${prescriptionText}`;
@@ -59,7 +78,7 @@ Parse examples of free-form prescription text like: 'Amoxicilina 250 mg 8/8h por
         { role: "user", content: userPrompt },
       ],
       temperature: 0,
-      max_tokens: 800,
+      max_tokens: 1500,
     };
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {

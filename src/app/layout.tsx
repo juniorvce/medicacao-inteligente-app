@@ -1,14 +1,22 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'] })
 
+export const dynamic = 'force-dynamic'
+
+export const viewport: Viewport = {
+  themeColor: '#16a34a',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+}
+
 export const metadata: Metadata = {
   title: 'Medicacao Inteligente',
   description: 'Controle de medicacao para criancas e familias',
   manifest: '/manifest.json',
-  themeColor: '#16a34a',
 }
 
 export default function RootLayout({
@@ -22,7 +30,6 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="MedApp" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       </head>
       <body className={inter.className}>
         {children}
