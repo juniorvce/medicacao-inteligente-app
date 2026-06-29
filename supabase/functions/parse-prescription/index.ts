@@ -1,33 +1,50 @@
-import { serve } from "https://deno.land/std@0.201.0/http/server.ts";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-serve(async (req: Request) => {
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req: Request) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      status: 200,
+      headers: corsHeaders,
+    });
+  }
+
   try {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "Method not allowed" }), {
         status: 405,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
     const body = await req.json().catch(() => null);
-    if (!body || typeof body.text !== "string") {
-      return new Response(JSON.stringify({ error: "Invalid request body. Expected JSON { \"text\": string }" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+    if (!body || (typeof body.text !== "string" && typeof body.image !== "string")) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid request body. Expected JSON with 'text' or 'image' (base64 data URL).",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
     }
 
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!OPENAI_API_KEY) {
       return new Response(JSON.stringify({ error: "OpenAI API key not configured (OPENAI_API_KEY)" }), {
         status: 500,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    const prescriptionText = body.text;
-
-    const systemPrompt = `You are a prescription parser. Extract medicines from the input text and return a single JSON object and nothing else with the exact shape:
+    const systemPrompt = `You are a prescription parser. Extract medicines from the input text or image and return a single JSON object and nothing else with the exact shape:
 {
   "medicamentos": [
     {
@@ -63,20 +80,45 @@ VARIABLE SCHEME / PHASES:
 CONFIRMATION FLAG:
 - Set "requires_confirmation": true if any part of the prescription is ambiguous, unclear, or partially illegible. Otherwise set it to false.
 
-Parse examples of free-form prescription text like:
+Parse examples of free-form prescription text or images like:
 - 'Amoxicilina 250 mg 8/8h por 7 dias'
 - 'Paracetamol 500mg SOS até 5 dias'
 - 'Koide D - Dias 1-2: 3x/dia, Dias 3-5: 2x/dia, Dia 6: 1x e parar'
 `;
 
-    const userPrompt = `Parse the following prescription text and return the JSON described above. Text:\n\n${prescriptionText}`;
+    let messages: any[] = [];
+    if (body.image) {
+      messages = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Analise esta imagem de receita médica e extraia todas as informações no formato JSON solicitado.",
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: body.image,
+              },
+            },
+          ],
+        },
+      ];
+    } else {
+      messages = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Parse the following prescription text and return the JSON described above. Text:\n\n${body.text}`,
+        },
+      ];
+    }
 
     const payload = {
       model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
+      messages: messages,
       temperature: 0,
       max_tokens: 1500,
     };
@@ -94,7 +136,7 @@ Parse examples of free-form prescription text like:
       const text = await res.text().catch(() => "");
       return new Response(JSON.stringify({ error: "OpenAI API error", details: text }), {
         status: 502,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
@@ -104,11 +146,11 @@ Parse examples of free-form prescription text like:
     if (!assistant) {
       return new Response(JSON.stringify({ error: "No content from OpenAI" }), {
         status: 502,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    // Try to extract JSON from the model output. The model should return pure JSON but we'll be defensive.
+    // Try to extract JSON from the model output.
     let jsonText = assistant;
 
     // If wrapped in Markdown code fences, strip them
@@ -126,34 +168,40 @@ Parse examples of free-form prescription text like:
     try {
       parsed = JSON.parse(jsonText);
     } catch (err) {
-      // If parsing failed, return raw assistant content for debugging
-      return new Response(JSON.stringify({ error: "Failed to parse JSON from OpenAI response", assistant }), {
-        status: 502,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "Failed to parse JSON from OpenAI response", assistant }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
     }
 
     // Basic validation: ensure medicamentos is an array
     if (!parsed || !Array.isArray(parsed.medicamentos)) {
-      return new Response(JSON.stringify({ error: "Parsed output missing medicamentos array", parsed }), {
-        status: 502,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "Parsed output missing medicamentos array", parsed }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
     }
 
     return new Response(JSON.stringify(parsed), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        ...corsHeaders,
       },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: "Internal server error", details: String(err) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: "Internal server error", details: String(err) }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      }
+    );
   }
 });

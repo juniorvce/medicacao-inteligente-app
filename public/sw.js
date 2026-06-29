@@ -58,3 +58,49 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request))
   );
 });
+
+// ---------------------------------------------------------------------------
+// PWA Web Push Notification Listeners
+// ---------------------------------------------------------------------------
+
+self.addEventListener('push', (event) => {
+  let data = { title: 'Lembrete de Remédio ⏰', body: 'Está na hora de tomar sua medicação!' };
+
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (e) {
+      data = { title: 'Lembrete de Remédio ⏰', body: event.data.text() };
+    }
+  }
+
+  const options = {
+    body: data.body,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    vibrate: [200, 100, 200],
+    data: {
+      url: data.url || '/dashboard'
+    }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url === event.notification.data.url && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(event.notification.data.url);
+      }
+    })
+  );
+});
